@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
 	"net/url"
 	"io/ioutil"
@@ -19,23 +19,56 @@ type YoutubeConfigArgs struct {
 	PlayerSource      string
 }
 
-type Video struct {
-	URL          string
-	Signature    string
-	Quality      string
-	Format       string
-}
-
 func MakeDownloadLink(link string, signature string) string {
-	downloadLink, _ := url.QueryUnescape(link + "&signature=" + signature)
-	fmt.Printf("%T", downloadLink)
+	downloadLink, _ := url.QueryUnescape(link + "&signature=" + signature);
 	return downloadLink
 }
 
-func ExtractVideoFormats(args YoutubeConfigArgs) []Video {
+func getAVCodecs(s string, t ResultType) (string, string, error) {
+	// Returns audio and video codecs in that order.
+	// s should look like codec="<video-codec>, <audio-codec>".
+	split := strings.Split(s, "=")
+	if len(split) < 2 {
+		return "", "", errors.New("Invalid codec string supplied")
+	}
+	codecs := strings.Split(split[1], ",")
+
+	if t == AUDIO {
+		audio := codecs[0]
+		return audio, "", nil
+	}
+
+	if len(codecs) < 2 {
+		video := codecs[0]
+		return "", video, nil
+	}
+
+	audio := codecs[1]
+	video := codecs[0]
+	return audio, video, nil
+}
+
+func extractResultFormat(s string, t ResultType) (ResultFormat, error){
+	split := strings.Split(s, ";")
+	format := split[0]
+	rf := ResultFormat{format, "", "", s}
+
+	if len(split) > 1 {
+		a, v, err := getAVCodecs(split[1], t)
+		if err != nil {
+			return rf, err
+		}
+		rf.AudioCodec = a
+		rf.VideoCodec = v
+	}
+
+	return rf, nil
+}
+
+func GetResults(args YoutubeConfigArgs) ([]Result, error) {
 	text := args.VideoFormats + "," + args.VideoAdaptFormats
 
-	videos := make([]Video, 0)
+	videos := make([]Result, 0)
 	for _, a := range strings.Split(text, ",") {
 		v := make(map[string]string)
 		for _, b := range strings.Split(a, "&") {
@@ -44,19 +77,46 @@ func ExtractVideoFormats(args YoutubeConfigArgs) []Video {
 				v[pair[0]] = pair[1]
 			}
 		}
-		signature := DecryptSignature(args, v["s"])
-		format, _ := url.QueryUnescape(v["type"])
+		signature, err := DecryptSignature(args, v["s"])
+		if err != nil {
+			return nil, err
+		}
+
+		format, err := url.QueryUnescape(v["type"])
+		if err != nil {
+			return nil, err
+		}
+
+		var resultType ResultType
+		if strings.Index(format, "audio") > -1 {
+			resultType = AUDIO
+		} else {
+			resultType = VIDEO
+		}
+
+		resultFormat, err := extractResultFormat(format, resultType)
+		if err != nil {
+			return make([]Result, 0), err
+		}
 
 		videos = append(videos,
-			Video{ URL: MakeDownloadLink(v["url"], signature), Signature: signature,
-				Quality: v["quality"], Format: format })
+			Result{ URL: MakeDownloadLink(v["url"], signature),
+				Signature: signature, Quality: v["quality"],
+				Type: resultType, Format: resultFormat })
 	}
-	return videos
+	return videos, nil
 }
 
-func GetYoutubeConfigArgs(url string) YoutubeConfigArgs {
-	resp, _ := http.Get(url)
-	page, _ := ioutil.ReadAll(resp.Body)
+func GetYoutubeConfigArgs(link string) (YoutubeConfigArgs, error) {
+	resp, err := http.Get(link)
+	if err != nil {
+		return YoutubeConfigArgs{}, err
+	}
+
+	page, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return YoutubeConfigArgs{}, err
+	}
 	defer resp.Body.Close()
 
 	bodyTxt := string(page[:])
@@ -92,15 +152,25 @@ func GetYoutubeConfigArgs(url string) YoutubeConfigArgs {
 	if strings.Index(jsURL, "//") != -1 {
 		jsURL = "http:" + jsURL
 	}
-	resp, _ = http.Get(jsURL)
-	page, _ = ioutil.ReadAll(resp.Body)
+
+	resp, err = http.Get(jsURL)
+	if err != nil {
+		return YoutubeConfigArgs{}, errors.New("Failed to get PlayerSource")
+	}
+
+	page, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return YoutubeConfigArgs{}, errors.New(
+			"Failed to read remote response (PlayerSource)")
+	}
+
 	defer resp.Body.Close()
 	jsScriptBody := string(page[:])
 
 	return YoutubeConfigArgs{
 		VideoID: videoID, VideoFormats: videoFormats,
 		VideoAdaptFormats: videoAdaptFormats, VideoManifestURL: videoManifestURL,
-		PlayerSource: jsScriptBody}
+		PlayerSource: jsScriptBody}, nil
 }
 
 func ExtractSignatureFunc(args YoutubeConfigArgs) string {
@@ -151,19 +221,28 @@ func ExtractHelperObject(args YoutubeConfigArgs, sigBody string) string {
 	return objCode
 }
 
-func DecryptSignature(args YoutubeConfigArgs, signature string) string {
+func DecryptSignature(args YoutubeConfigArgs, signature string) (string, error) {
 	sigBody := ExtractSignatureFunc(args)
 	helperObj := ExtractHelperObject(args, sigBody)
 
 	jsvm := otto.New()
 	jsvm.Set("a", signature)
-	// TODO: Handle error
+
 	_, err := jsvm.Run(helperObj + ";a = a.split(\"\");" + sigBody + ";a = a.join(\"\");")
 
-	fmt.Println(err)
+	if err != nil {
+		return "", errors.New("Error in JS runtime")
+	}
 
-	js_a, _ := jsvm.Get("a")
-	value, _ := js_a.ToString()
+	js_a, err := jsvm.Get("a")
+	if err != nil {
+		return "", errors.New("Error decrypting signature")
+	}
 
-	return value
+	value, err := js_a.ToString()
+	if err != nil {
+		return "", errors.New("Error decrypting signature")
+	}
+
+	return value, err
 }
