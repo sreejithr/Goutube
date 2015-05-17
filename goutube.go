@@ -1,24 +1,22 @@
-package main
-
-import (
-	"fmt"
-)
+package goutube
 
 // TODO: Check if valid Youtube url. If not (minified urls), try following them
 
-/**
-video <- goutube.Youtube(link)
-args := video.args
-downloadLink := video.
-*/
-func main() {
- 	args, err := GetYoutubeConfigArgs("https://www.youtube.com/watch?v=iZq3i94mSsQ")
-	if err != nil {
-		return
-	}
-	results, _ := GetResults(args)
+func Youtube(link string, errorChan chan error) <-chan []Link {
+	resultChan := make(chan []Link)
+	go func() {
+		args, err := GetYoutubeConfigArgs(link)
+		if err != nil {
+			errorChan <- err
+			return
+		}
 
-	for _, result := range results {
-		fmt.Println(result.Format.Type)
-	}
+		links, err := GetLinks(args)
+		if err != nil {
+			errorChan <- err
+			return
+		}
+		resultChan <- links
+	}()
+	return resultChan
 }
