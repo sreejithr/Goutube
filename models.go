@@ -1,13 +1,13 @@
-package main
+package goutube
 
-type ResultType int
+type MediaType int
 
 const (
-	VIDEO ResultType = iota
+	VIDEO MediaType = iota
 	AUDIO
 )
 
-func (t ResultType) String() string {
+func (t MediaType) String() string {
 	var s string
 	switch t {
 	case VIDEO:
@@ -18,17 +18,23 @@ func (t ResultType) String() string {
 	return s
 }
 
-type ResultFormat struct {
+type MediaFormat struct {
 	Type         string
 	VideoCodec   string
 	AudioCodec   string
 	Raw          string
 }
 
-type Result struct {
+type Link struct {
 	URL          string
-	Type         ResultType
+	Type         MediaType
 	Signature    string
 	Quality      string
-	Format       ResultFormat
+	Format       MediaFormat
+}
+
+type Result struct {
+	Done         chan bool
+	Error        chan error
+	Links        []Link
 }
