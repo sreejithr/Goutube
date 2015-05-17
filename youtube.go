@@ -1,4 +1,4 @@
-package main
+package goutube
 
 import (
 	"errors"
@@ -19,12 +19,12 @@ type YoutubeConfigArgs struct {
 	PlayerSource      string
 }
 
-func MakeDownloadLink(link string, signature string) string {
+func addSignatureToURL(link string, signature string) string {
 	downloadLink, _ := url.QueryUnescape(link + "&signature=" + signature);
 	return downloadLink
 }
 
-func getAVCodecs(s string, t ResultType) (string, string, error) {
+func getAVCodecs(s string, t MediaType) (string, string, error) {
 	// Returns audio and video codecs in that order.
 	// s should look like codec="<video-codec>, <audio-codec>".
 	split := strings.Split(s, "=")
@@ -48,10 +48,10 @@ func getAVCodecs(s string, t ResultType) (string, string, error) {
 	return audio, video, nil
 }
 
-func extractResultFormat(s string, t ResultType) (ResultFormat, error){
+func extractMediaFormat(s string, t MediaType) (MediaFormat, error){
 	split := strings.Split(s, ";")
 	format := split[0]
-	rf := ResultFormat{format, "", "", s}
+	rf := MediaFormat{format, "", "", s}
 
 	if len(split) > 1 {
 		a, v, err := getAVCodecs(split[1], t)
@@ -65,10 +65,10 @@ func extractResultFormat(s string, t ResultType) (ResultFormat, error){
 	return rf, nil
 }
 
-func GetResults(args YoutubeConfigArgs) ([]Result, error) {
+func GetLinks(args YoutubeConfigArgs) ([]Link, error) {
 	text := args.VideoFormats + "," + args.VideoAdaptFormats
 
-	videos := make([]Result, 0)
+	videos := make([]Link, 0)
 	for _, a := range strings.Split(text, ",") {
 		v := make(map[string]string)
 		for _, b := range strings.Split(a, "&") {
@@ -87,22 +87,22 @@ func GetResults(args YoutubeConfigArgs) ([]Result, error) {
 			return nil, err
 		}
 
-		var resultType ResultType
+		var mediaType MediaType
 		if strings.Index(format, "audio") > -1 {
-			resultType = AUDIO
+			mediaType = AUDIO
 		} else {
-			resultType = VIDEO
+			mediaType = VIDEO
 		}
 
-		resultFormat, err := extractResultFormat(format, resultType)
+		mediaFormat, err := extractMediaFormat(format, mediaType)
 		if err != nil {
-			return make([]Result, 0), err
+			return make([]Link, 0), err
 		}
 
 		videos = append(videos,
-			Result{ URL: MakeDownloadLink(v["url"], signature),
+			Link{ URL: addSignatureToURL(v["url"], signature),
 				Signature: signature, Quality: v["quality"],
-				Type: resultType, Format: resultFormat })
+				Type: mediaType, Format: mediaFormat })
 	}
 	return videos, nil
 }
@@ -173,7 +173,7 @@ func GetYoutubeConfigArgs(link string) (YoutubeConfigArgs, error) {
 		PlayerSource: jsScriptBody}, nil
 }
 
-func ExtractSignatureFunc(args YoutubeConfigArgs) string {
+func ExtractJSSignatureFunc(args YoutubeConfigArgs) string {
 	// In the script body, the `foo(bar)` in .set("signature", foo(bar)) is the
 	// signature function
 	funcNameRegex1 := regexp.MustCompile(`.set\("signature"\s*,\s*(.*)\(`)
@@ -192,7 +192,7 @@ func ExtractSignatureFunc(args YoutubeConfigArgs) string {
 	return body
 }
 
-func ExtractHelperObject(args YoutubeConfigArgs, sigBody string) string {
+func ExtractJSHelperObject(args YoutubeConfigArgs, sigBody string) string {
 	// We need to extract whole of the helper object (`fG` in eg above).
 	funcNameRegex := regexp.MustCompile(`(\w*).\.*`)
 	firstFuncCall := strings.Split(sigBody, ";")[0]
@@ -222,8 +222,8 @@ func ExtractHelperObject(args YoutubeConfigArgs, sigBody string) string {
 }
 
 func DecryptSignature(args YoutubeConfigArgs, signature string) (string, error) {
-	sigBody := ExtractSignatureFunc(args)
-	helperObj := ExtractHelperObject(args, sigBody)
+	sigBody := ExtractJSSignatureFunc(args)
+	helperObj := ExtractJSHelperObject(args, sigBody)
 
 	jsvm := otto.New()
 	jsvm.Set("a", signature)
