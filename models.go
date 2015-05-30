@@ -1,5 +1,7 @@
 package goutube
 
+import "fmt"
+
 type MediaType int
 
 const (
@@ -31,6 +33,16 @@ type Link struct {
 	Signature    string
 	Quality      string
 	Format       MediaFormat
+}
+
+func (t Link) String() string {
+	quality := t.Quality
+	if len(quality) == 0 {
+		quality = "NA"
+	}
+	s := fmt.Sprintf("URL: %s,\n Type: %s,\n Quality: %s,\n Format(Raw): %s\n",
+		t.URL, t.Type, quality, t.Format.Raw)
+	return s
 }
 
 type Result struct {
